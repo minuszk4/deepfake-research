@@ -12,6 +12,7 @@ import random
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix, roc_curve
+from tqdm import tqdm
 
 import argparse
 import sys

@@ -14,7 +14,7 @@ import sys
 
 sys.path.append('.')
 from src.models.factory import create_model
-from src.data.dataset import DeepfakeDataset
+from src.data.dataset import DeepfakeDataset, PreExtractedFaceDataset
 
 def load_config(config_path="configs/baseline.yaml"):
     with open(config_path, 'r') as file:
@@ -40,12 +40,42 @@ def run_gradcam():
     print(f"[*] Thiết bị: {device}")
     
     os.makedirs('results/gradcam', exist_ok=True)
-    df_master = pd.read_csv('master_split.csv')
-    # Lấy 1 sample Real và 1 sample Fake rõ ràng
-    df_sample = pd.concat([
-        df_master[(df_master['split'] == 'test') & (df_master['label'] == 0)].head(2),
-        df_master[(df_master['split'] == 'test') & (df_master['label'] == 1)].head(2)
-    ])
+    
+    # Kiểm tra Dataset Mới hay Cũ
+    dataset_cfg = config.get('dataset', {})
+    mode = dataset_cfg.get('mode', 'faces')
+    faces_csv = dataset_cfg.get('faces_csv', 'faces_master.csv')
+    if not os.path.exists(faces_csv):
+        candidates = [
+            '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
+            '/kaggle/input/datasets/min2k4/face-ff/ffpp_faces/faces_master.csv',
+            '/kaggle/input/ffpp-faces-c23/faces_master.csv',
+            '/kaggle/working/ffpp_faces/faces_master.csv'
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                faces_csv = c
+                break
+
+    use_pre_extracted = (mode == 'faces' and os.path.exists(faces_csv))
+
+    if use_pre_extracted:
+        df_faces = pd.read_csv(faces_csv)
+        df_sample = pd.concat([
+            df_faces[(df_faces['split'] == 'test') & (df_faces['label'] == 0)].head(2),
+            df_faces[(df_faces['split'] == 'test') & (df_faces['label'] == 1)].head(2)
+        ])
+        base_dir = os.path.dirname(faces_csv)
+    else:
+        df_master = pd.read_csv('master_split.csv') if os.path.exists('master_split.csv') else pd.DataFrame()
+        if df_master.empty:
+            print("[!] Không tìm thấy dữ liệu mẫu cho Grad-CAM.")
+            return
+        df_sample = pd.concat([
+            df_master[(df_master['split'] == 'test') & (df_master['label'] == 0)].head(2),
+            df_master[(df_master['split'] == 'test') & (df_master['label'] == 1)].head(2)
+        ])
+        base_dir = None
 
     for model_key, m_cfg in config['models'].items():
         ckpt_path = f"results/checkpoints/best_{model_key}.pth"
@@ -65,7 +95,10 @@ def run_gradcam():
             A.Normalize(), ToTensorV2()
         ])
         
-        ds = DeepfakeDataset(df_sample, transform=transform, frames_per_video=1, device=device)
+        if use_pre_extracted:
+            ds = PreExtractedFaceDataset(df_sample, transform=transform, base_dir=base_dir)
+        else:
+            ds = DeepfakeDataset(df_sample, transform=transform, frames_per_video=1, device=device)
         loader = DataLoader(ds, batch_size=1, shuffle=False)
         
         fig, axes = plt.subplots(len(ds), 3, figsize=(12, 4 * max(1, len(ds))), squeeze=False)
