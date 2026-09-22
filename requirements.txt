@@ -1,0 +1,13 @@
+torch
+torchvision
+timm
+facenet-pytorch
+albumentations
+opencv-python
+pandas
+scikit-learn
+networkx
+tqdm
+matplotlib
+seaborn
+pyyaml
