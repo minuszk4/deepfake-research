@@ -81,3 +81,33 @@ class DeepfakeDataset(Dataset):
             img = self.transform(image=img)['image']
             
         return img, torch.tensor(label, dtype=torch.float32), torch.tensor(vid_id, dtype=torch.long)
+
+class PreExtractedFaceDataset(Dataset):
+    """
+    Dataset đọc trực tiếp từ các file ảnh .jpg đã cắt sẵn.
+    Tốc độ nhanh gấp 50-100 lần so với đọc từ video .mp4.
+    """
+    def __init__(self, df, transform=None):
+        self.df = df.reset_index(drop=True)
+        self.transform = transform
+        
+        # Tạo mapping video_id dạng số để phục vụ video-level aggregation
+        unique_vids = {vid: i for i, vid in enumerate(self.df['video_id'].unique())}
+        self.df['vid_num_id'] = self.df['video_id'].map(unique_vids)
+        
+    def __len__(self):
+        return len(self.df)
+        
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        img = cv2.imread(row['image_path'])
+        if img is None:
+            img = np.zeros((224, 224, 3), dtype=np.uint8)
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+        if self.transform:
+            img = self.transform(image=img)['image']
+            
+        return img, torch.tensor(row['label'], dtype=torch.float32), torch.tensor(row['vid_num_id'], dtype=torch.long)
+
