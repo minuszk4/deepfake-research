@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from torch.utils.data import DataLoader
 import albumentations as A
+from albumentations.pytorch import ToTensorV2
 import random
 import matplotlib.pyplot as plt
 import seaborn as sns
