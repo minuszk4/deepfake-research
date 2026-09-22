@@ -20,6 +20,11 @@ def load_config(config_path="configs/baseline.yaml"):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
+def reshape_transform_vit(tensor, height=14, width=14):
+    result = tensor[:, 1:, :].reshape(tensor.size(0), height, width, tensor.size(2))
+    result = result.transpose(2, 3).transpose(1, 2)
+    return result
+
 def get_target_layer(model, model_key):
     """
     Xác định layer cuối cùng của mô hình để vẽ Grad-CAM
@@ -32,6 +37,8 @@ def get_target_layer(model, model_key):
         return [model.conv_head]
     elif 'xception' in model_key:
         return [model.conv4]
+    elif 'vit' in model_key:
+        return [model.blocks[-1].norm1]
     return [list(model.children())[-2]] # Default heuristic
 
 def run_gradcam():
@@ -88,7 +95,8 @@ def run_gradcam():
         model.eval()
         
         target_layers = get_target_layer(model, model_key)
-        cam = GradCAM(model=model, target_layers=target_layers)
+        reshape_fn = reshape_transform_vit if 'vit' in model_key else None
+        cam = GradCAM(model=model, target_layers=target_layers, reshape_transform=reshape_fn)
         
         transform = A.Compose([
             A.Resize(m_cfg['img_size'], m_cfg['img_size']),
