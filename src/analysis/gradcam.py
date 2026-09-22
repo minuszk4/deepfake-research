@@ -31,6 +31,8 @@ def get_target_layer(model, model_key):
     """
     if model_key == 'meso4':
         return [model.conv4]
+    elif model_key == 'freq_meso':
+        return [model.fuse_conv[0]]
     elif 'mobilenet' in model_key:
         return [model.conv_head]
     elif 'efficientnet' in model_key:
