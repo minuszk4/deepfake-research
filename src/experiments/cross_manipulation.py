@@ -44,6 +44,8 @@ def evaluate_subset(model, df_subset, transform, device, batch_size=16):
         
     return {'acc': round(acc, 4), 'auc': round(auc, 4)}
 
+from torch.utils.data import DataLoader, Subset
+
 def run_cross_manipulation():
     config = load_config()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -52,8 +54,8 @@ def run_cross_manipulation():
     df_master = pd.read_csv('master_split.csv')
     df_test = df_master[df_master['split'] == 'test']
     
-    # Lấy Real videos làm baseline chung
-    df_real = df_test[df_test['label'] == 0]
+    print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT TẬP TEST (Chỉ trích xuất 1 lần duy nhất)")
+    raw_test_ds = DeepfakeDataset(df_test, transform=None, frames_per_video=config.get('frames_per_video', 3), device=device)
     
     manipulations = ['Deepfakes', 'Face2Face', 'FaceSwap', 'NeuralTextures']
     results = []
@@ -75,16 +77,42 @@ def run_cross_manipulation():
             A.Resize(m_cfg['img_size'], m_cfg['img_size']),
             A.Normalize(), ToTensorV2()
         ])
+        raw_test_ds.transform = transform
         
         row_res = {'Model': model_key}
         for manip in manipulations:
-            df_manip_fake = df_test[(df_test['label'] == 1) & (df_test['manipulation'] == manip)]
-            # Ghép mẫu Real và Fake thuộc manipulation đó để tính AUC
-            test_subset = pd.concat([df_real, df_manip_fake])
+            # Lấy indices của các sample là Real hoặc là Fake thuộc manipulation này
+            indices = [
+                i for i, s in enumerate(raw_test_ds.samples)
+                if s['label'] == 0 or s.get('manipulation') == manip
+            ]
+            if len(indices) == 0:
+                row_res[f"{manip}_Acc"] = np.nan
+                row_res[f"{manip}_AUC"] = np.nan
+                continue
+
+            subset_ds = Subset(raw_test_ds, indices)
+            loader = DataLoader(subset_ds, batch_size=m_cfg['batch_size'], shuffle=False)
             
-            metrics = evaluate_subset(model, test_subset, transform, device, batch_size=m_cfg['batch_size'])
-            row_res[f"{manip}_Acc"] = metrics['acc']
-            row_res[f"{manip}_AUC"] = metrics['auc']
+            all_probs, all_labels = [], []
+            with torch.no_grad():
+                for images, labels, _ in loader:
+                    probs = torch.sigmoid(model(images.to(device)).view(-1)).cpu().numpy()
+                    all_probs.extend(probs)
+                    all_labels.extend(labels.numpy())
+                    
+            labels = np.array(all_labels)
+            probs = np.array(all_probs)
+            preds = (probs >= 0.5).astype(int)
+            
+            acc = accuracy_score(labels, preds)
+            try:
+                auc = roc_auc_score(labels, probs) if len(np.unique(labels)) > 1 else np.nan
+            except:
+                auc = np.nan
+                
+            row_res[f"{manip}_Acc"] = round(acc, 4)
+            row_res[f"{manip}_AUC"] = round(auc, 4)
             
         results.append(row_res)
         del model

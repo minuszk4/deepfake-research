@@ -27,11 +27,11 @@ def get_target_layer(model, model_key):
     if model_key == 'meso4':
         return [model.conv4]
     elif 'mobilenet' in model_key:
-        return [model.blocks[-1]]
+        return [model.conv_head]
     elif 'efficientnet' in model_key:
         return [model.conv_head]
     elif 'xception' in model_key:
-        return [model.act4]
+        return [model.conv4]
     return [list(model.children())[-2]] # Default heuristic
 
 def run_gradcam():
@@ -68,7 +68,7 @@ def run_gradcam():
         ds = DeepfakeDataset(df_sample, transform=transform, frames_per_video=1, device=device)
         loader = DataLoader(ds, batch_size=1, shuffle=False)
         
-        fig, axes = plt.subplots(len(ds), 3, figsize=(12, 4 * len(ds)))
+        fig, axes = plt.subplots(len(ds), 3, figsize=(12, 4 * max(1, len(ds))), squeeze=False)
         
         for idx, (img_tensor, label, vid_id) in enumerate(loader):
             input_tensor = img_tensor.to(device)

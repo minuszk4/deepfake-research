@@ -50,6 +50,9 @@ def run_robustness_experiment():
         ('Noise (Low)', 'noise', 20),
     ]
 
+    print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT TẬP TEST (Chỉ trích xuất 1 lần duy nhất)")
+    raw_test_ds = DeepfakeDataset(df_test, transform=None, frames_per_video=config.get('frames_per_video', 3), device=device)
+
     all_results = []
 
     for model_key, m_cfg in config['models'].items():
@@ -64,13 +67,13 @@ def run_robustness_experiment():
 
         for test_name, deg_type, intensity in tests:
             transform = get_degraded_transform(m_cfg['img_size'], deg_type, intensity)
-            ds = DeepfakeDataset(df_test, transform=transform, device=device)
-            loader = DataLoader(ds, batch_size=m_cfg['batch_size'], shuffle=False)
+            raw_test_ds.transform = transform
+            loader = DataLoader(raw_test_ds, batch_size=m_cfg['batch_size'], shuffle=False)
             
             all_probs, all_labels = [], []
             with torch.no_grad():
                 for images, labels, _ in loader:
-                    probs = torch.sigmoid(model(images.to(device)).squeeze(1)).cpu().numpy()
+                    probs = torch.sigmoid(model(images.to(device)).view(-1)).cpu().numpy()
                     all_probs.extend(probs)
                     all_labels.extend(labels.numpy())
                     

@@ -28,6 +28,8 @@ class DeepfakeDataset(Dataset):
             label = row['label']
             vid_id = row.name # Dùng index giả làm ID video để đánh giá Video-level sau này
             
+            manipulation = row['manipulation'] if 'manipulation' in row else 'unknown'
+            
             cap = cv2.VideoCapture(vid_path)
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             if frame_count == 0: continue
@@ -43,11 +45,12 @@ class DeepfakeDataset(Dataset):
                     try:
                         face = self.mtcnn(frame)
                         if face is not None:
-                            face_img = face.permute(1, 2, 0).numpy().astype(np.uint8)
+                            face_img = face.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
                             self.samples.append({
                                 'image': face_img, 
                                 'label': label,
-                                'video_id': vid_id 
+                                'video_id': vid_id,
+                                'manipulation': manipulation
                             })
                         else:
                             failed_attempts += 1

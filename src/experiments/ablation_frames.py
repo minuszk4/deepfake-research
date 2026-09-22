@@ -62,7 +62,7 @@ def run_ablation_frames():
         
         with torch.no_grad():
             for images, labels, vids in loader:
-                probs = torch.sigmoid(model(images.to(device)).squeeze(1)).cpu().numpy()
+                probs = torch.sigmoid(model(images.to(device)).view(-1)).cpu().numpy()
                 all_probs.extend(probs)
                 all_labels.extend(labels.numpy())
                 all_vids.extend(vids.numpy())

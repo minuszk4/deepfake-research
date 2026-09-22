@@ -7,8 +7,10 @@ import pandas as pd
 import numpy as np
 from torch.utils.data import DataLoader
 import albumentations as A
-from albumentations.pytorch import ToTensorV2
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+import random
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix, roc_curve
 
 import sys
 sys.path.append('.') # Cho phép chạy script từ root directory
@@ -16,12 +18,21 @@ sys.path.append('.') # Cho phép chạy script từ root directory
 from src.data.dataset import DeepfakeDataset
 from src.models.factory import create_model
 
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+
 def load_config(config_path):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
 def main():
     config = load_config('configs/baseline.yaml')
+    set_seed(config.get('seed', 42))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[*] Sử dụng thiết bị: {device}")
     
@@ -55,8 +66,10 @@ def main():
     print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP TEST")
     test_ds_raw = DeepfakeDataset(df_test, frames_per_video=config['frames_per_video'], device=device)
 
-    # 2. Vòng lặp huấn luyện từng Model trong Config
+        # 2. Vòng lặp huấn luyện từng Model trong Config
     os.makedirs('results/checkpoints', exist_ok=True)
+    os.makedirs('results/metrics', exist_ok=True)
+    os.makedirs('results/figures', exist_ok=True)
     
     for model_key, m_cfg in config['models'].items():
         print(f"\n{'='*50}\n🚀 ĐANG HUẤN LUYỆN: {model_key.upper()} \n{'='*50}")
@@ -96,7 +109,7 @@ def main():
             train_loss = 0
             for images, labels, _ in train_loader:
                 optimizer.zero_grad()
-                loss = criterion(model(images.to(device)).squeeze(1), labels.to(device))
+                loss = criterion(model(images.to(device)).view(-1), labels.to(device))
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
@@ -107,7 +120,7 @@ def main():
             val_loss = 0
             with torch.no_grad():
                 for images, labels, _ in val_loader:
-                    val_loss += criterion(model(images.to(device)).squeeze(1), labels.to(device)).item()
+                    val_loss += criterion(model(images.to(device)).view(-1), labels.to(device)).item()
             avg_val_loss = val_loss / len(val_loader)
             
             print(f"Epoch {epoch+1}/{config['epochs']} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
@@ -126,16 +139,32 @@ def main():
                 print(f"  -> Kích hoạt Early Stopping tại Epoch {epoch+1}!")
                 break
                 
+        # Lưu Training History & Biểu đồ Loss
+        df_hist = pd.DataFrame(history)
+        df_hist.to_csv(f"results/metrics/{model_key}_history.csv", index=False)
+        
+        plt.figure(figsize=(8, 4))
+        plt.plot(df_hist['epoch'], df_hist['train_loss'], label='Train Loss', marker='o')
+        plt.plot(df_hist['epoch'], df_hist['val_loss'], label='Val Loss', marker='s')
+        plt.title(f"Training & Validation Loss ({model_key.upper()})")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(f"results/figures/{model_key}_loss_curve.png", dpi=300)
+        plt.close()
+
         # --- ĐÁNH GIÁ (FRAME-LEVEL & VIDEO-LEVEL) TRÊN TẬP TEST ĐỘC LẬP ---
         print(f"\n📊 Đang đánh giá {model_key} trên tập TEST...")
-        model.load_state_dict(torch.load(f"results/checkpoints/best_{model_key}.pth"))
+        model.load_state_dict(torch.load(f"results/checkpoints/best_{model_key}.pth", map_location=device))
         model.eval()
         
         all_probs, all_labels, all_vids = [], [], []
         
         with torch.no_grad():
             for images, labels, vids in test_loader:
-                probs = torch.sigmoid(model(images.to(device)).squeeze(1)).cpu().numpy()
+                probs = torch.sigmoid(model(images.to(device)).view(-1)).cpu().numpy()
                 all_probs.extend(probs)
                 all_labels.extend(labels.numpy())
                 all_vids.extend(vids.numpy())
@@ -149,7 +178,6 @@ def main():
         
         # 2. Video-level Metrics (Aggregation)
         df_test_preds = pd.DataFrame({'vid_id': all_vids, 'prob': all_probs, 'label': all_labels})
-        # Dùng MEAN của các probability để ra điểm của Video
         vid_agg = df_test_preds.groupby('vid_id').mean()
         vid_preds = (vid_agg['prob'] >= 0.5).astype(int)
         vid_labels = vid_agg['label'].astype(int)
@@ -157,12 +185,37 @@ def main():
         print("--- VIDEO-LEVEL ---")
         print(f"Accuracy : {accuracy_score(vid_labels, vid_preds):.4f}")
         print(f"F1-Score : {f1_score(vid_labels, vid_preds, zero_division=0):.4f}")
-        try:
-            print(f"ROC-AUC  : {roc_auc_score(vid_labels, vid_agg['prob']):.4f}")
-        except: pass
+        if len(np.unique(vid_labels)) > 1:
+            auc = roc_auc_score(vid_labels, vid_agg['prob'])
+            print(f"ROC-AUC  : {auc:.4f}")
+            
+            # Vẽ ROC Curve & Confusion Matrix
+            fpr, tpr, _ = roc_curve(vid_labels, vid_agg['prob'])
+            plt.figure(figsize=(6, 5))
+            plt.plot(fpr, tpr, label=f"AUC = {auc:.4f}")
+            plt.plot([0, 1], [0, 1], 'k--')
+            plt.title(f"ROC Curve - Video-Level ({model_key.upper()})")
+            plt.xlabel("False Positive Rate")
+            plt.ylabel("True Positive Rate")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(f"results/figures/{model_key}_roc_curve.png", dpi=300)
+            plt.close()
+            
+            cm = confusion_matrix(vid_labels, vid_preds)
+            plt.figure(figsize=(5, 4))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Real', 'Fake'], yticklabels=['Real', 'Fake'])
+            plt.title(f"Confusion Matrix ({model_key.upper()})")
+            plt.ylabel("True")
+            plt.xlabel("Predicted")
+            plt.tight_layout()
+            plt.savefig(f"results/figures/{model_key}_confusion_matrix.png", dpi=300)
+            plt.close()
+        else:
+            print("ROC-AUC  : N/A (Chỉ có 1 class trong tập test)")
         
         del model
-        torch.cuda.empty_cache()
+        if device.type == 'cuda': torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     main()

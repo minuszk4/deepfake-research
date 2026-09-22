@@ -18,7 +18,7 @@ def load_config(config_path="configs/baseline.yaml"):
         return yaml.safe_load(file)
 
 def save_image_from_tensor(tensor, save_path):
-    img_np = tensor.squeeze().permute(1, 2, 0).numpy()
+    img_np = tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
     mean, std = np.array([0.485, 0.456, 0.406]), np.array([0.229, 0.224, 0.225])
     img_original = np.clip(img_np * std + mean, 0, 1) * 255.0
     cv2.imwrite(save_path, cv2.cvtColor(img_original.astype(np.uint8), cv2.COLOR_RGB2BGR))
