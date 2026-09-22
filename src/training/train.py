@@ -32,10 +32,21 @@ def main():
         return
         
     df_master = pd.read_csv(csv_path)
-    # Debug mode: Lấy sample nhỏ để test pipeline
-    df_train = df_master[df_master['split'] == 'train'].head(20) # Bỏ .head(20) khi train thật
-    df_val = df_master[df_master['split'] == 'val'].head(10)
-    df_test = df_master[df_master['split'] == 'test'].head(10)
+    
+    # Cờ Debug: Đặt thành False khi muốn train trên TOÀN BỘ dữ liệu
+    DEBUG_MODE = True
+    
+    if DEBUG_MODE:
+        print("[!] ĐANG CHẠY Ở CHẾ ĐỘ DEBUG (Chỉ lấy mẫu nhỏ gọn)")
+        # Lấy cân bằng mẫu của cả 2 class (Real/Fake) để tránh lỗi chỉ có 1 class
+        # Dùng replace=True phòng trường hợp tập val không đủ 5 video mỗi loại
+        df_train = df_master[df_master['split'] == 'train'].groupby('label').sample(n=10, replace=True, random_state=42)
+        df_val = df_master[df_master['split'] == 'val'].groupby('label').sample(n=5, replace=True, random_state=42)
+        df_test = df_master[df_master['split'] == 'test'].groupby('label').sample(n=5, replace=True, random_state=42)
+    else:
+        df_train = df_master[df_master['split'] == 'train']
+        df_val = df_master[df_master['split'] == 'val']
+        df_test = df_master[df_master['split'] == 'test']
     
     print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP TRAIN")
     train_ds_raw = DeepfakeDataset(df_train, frames_per_video=config['frames_per_video'], device=device)
