@@ -45,7 +45,15 @@ def main():
     run_cmd("7. Phân tích Ca Sai & Xuất Ảnh (Error Analysis)", f"{sys.executable} src/analysis/error_analysis.py")
     
     # 8. Đóng gói kết quả thành file zip
-    run_cmd("8. Nén toàn bộ kết quả thành file ZIP", "zip -q -r full_research_results.zip results/")
+    import shutil
+    print(f"\n{'='*70}")
+    print(f"🚀 BẮT ĐẦU: 8. Nén toàn bộ kết quả thành file ZIP")
+    print(f"{'='*70}\n")
+    try:
+        shutil.make_archive('full_research_results', 'zip', 'results')
+        print(f"[✔] HOÀN TẤT: Đã tạo thành công full_research_results.zip")
+    except Exception as e:
+        print(f"[❌] LỖI khi nén file zip: {e}")
     
     print("\n" + "="*70)
     print("🏆 TOÀN BỘ NGHIÊN CỨU ĐÃ HOÀN TẤT THÀNH CÔNG 100%!")
