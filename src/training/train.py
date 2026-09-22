@@ -13,10 +13,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix, roc_curve
 
+import argparse
 import sys
 sys.path.append('.') # Cho phép chạy script từ root directory
 
-from src.data.dataset import DeepfakeDataset
+from src.data.dataset import DeepfakeDataset, PreExtractedFaceDataset
 from src.models.factory import create_model
 
 def set_seed(seed=42):
@@ -32,46 +33,108 @@ def load_config(config_path):
         return yaml.safe_load(file)
 
 def main():
+    parser = argparse.ArgumentParser(description="Huấn luyện mô hình Deepfake Detection")
+    parser.add_argument('--dataset_mode', type=str, default='faces', choices=['video', 'faces'], 
+                        help='Chế độ: "faces" (Dataset MỚI đọc ảnh cắt sẵn) hoặc "video" (Dataset CŨ đọc mp4)')
+    parser.add_argument('--faces_csv', type=str, default=None, help='Đường dẫn faces_master.csv')
+    parser.add_argument('--video_csv', type=str, default=None, help='Đường dẫn master_split.csv')
+    parser.add_argument('--debug', type=str, default='false', choices=['true', 'false'], 
+                        help='Bật/Tắt DEBUG_MODE (mặc định "false" để train toàn bộ dữ liệu)')
+    args = parser.parse_args()
+
     config = load_config('configs/baseline.yaml')
     set_seed(config.get('seed', 42))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[*] Sử dụng thiết bị: {device}")
     
-    # 1. Đọc Dữ liệu Split
-    csv_path = 'master_split.csv'
-    if not os.path.exists(csv_path):
-        print("[!] Không tìm thấy master_split.csv! Hãy chạy file identity_split.py trước.")
-        return
-        
-    df_master = pd.read_csv(csv_path)
+    # 1. Xác định Chế độ Dataset (Ưu tiên CLI -> Config YAML -> Mặc định 'faces')
+    dataset_cfg = config.get('dataset', {})
+    mode = args.dataset_mode or dataset_cfg.get('mode', 'faces')
     
-    # Cờ Debug: Đặt thành False khi muốn train trên TOÀN BỘ dữ liệu
-    DEBUG_MODE = True
-    
-    if DEBUG_MODE:
-        print("[!] ĐANG CHẠY Ở CHẾ ĐỘ DEBUG (Chỉ lấy mẫu nhỏ gọn)")
-        # Lấy cân bằng mẫu của cả 2 class (Real/Fake) để tránh lỗi chỉ có 1 class
-        # Dùng replace=True phòng trường hợp tập val không đủ 5 video mỗi loại
-        df_train = df_master[df_master['split'] == 'train'].groupby('label').sample(n=10, replace=True, random_state=42)
-        df_val = df_master[df_master['split'] == 'val'].groupby('label').sample(n=5, replace=True, random_state=42)
-        df_test = df_master[df_master['split'] == 'test'].groupby('label').sample(n=5, replace=True, random_state=42)
-    else:
-        df_train = df_master[df_master['split'] == 'train']
-        df_val = df_master[df_master['split'] == 'val']
-        df_test = df_master[df_master['split'] == 'test']
-    
-    print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP TRAIN")
-    train_ds_raw = DeepfakeDataset(df_train, frames_per_video=config['frames_per_video'], device=device)
-    print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP VAL")
-    val_ds_raw = DeepfakeDataset(df_val, frames_per_video=config['frames_per_video'], device=device)
-    print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP TEST")
-    test_ds_raw = DeepfakeDataset(df_test, frames_per_video=config['frames_per_video'], device=device)
+    # Mặc định DEBUG_MODE = False để train all
+    DEBUG_MODE = (args.debug.lower() == 'true')
 
-        # 2. Vòng lặp huấn luyện từng Model trong Config
+    if mode == 'faces':
+        # --- OPTION 1: DATASET MỚI (ẢNH ĐÃ CẮT SẴN - TRAIN SIÊU TỐC) ---
+        faces_csv = args.faces_csv or dataset_cfg.get('faces_csv', 'faces_master.csv')
+        
+        # Tự động dò tìm đường dẫn trên Kaggle
+        if not os.path.exists(faces_csv):
+            candidates = [
+                '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
+                '/kaggle/input/datasets/min2k4/face-ff/ffpp_faces/faces_master.csv',
+                '/kaggle/input/ffpp-faces-c23/faces_master.csv',
+                '/kaggle/input/ffpp-faces-c23/ffpp_faces/faces_master.csv',
+                '/kaggle/working/ffpp_faces/faces_master.csv',
+                'ffpp_faces/faces_master.csv',
+                'faces_master.csv'
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    faces_csv = c
+                    break
+
+        if not os.path.exists(faces_csv):
+            print(f"[!] Không tìm thấy file faces_master.csv tại: {faces_csv}")
+            print("    -> Nếu chưa cắt mặt, hãy chạy extract_faces_fast.py hoặc thêm flag: --dataset_mode video")
+            return
+
+        base_dir = os.path.dirname(faces_csv)
+        print(f"\n🚀 SỬ DỤNG DATASET MỚI (Ảnh đã trích xuất sẵn): {faces_csv}")
+        df_faces = pd.read_csv(faces_csv)
+        
+        if DEBUG_MODE:
+            print("[!] ĐANG CHẠY Ở CHẾ ĐỘ DEBUG (Chỉ lấy mẫu nhỏ)")
+            df_train = df_faces[df_faces['split'] == 'train'].groupby('label').sample(n=50, replace=True, random_state=42)
+            df_val = df_faces[df_faces['split'] == 'val'].groupby('label').sample(n=20, replace=True, random_state=42)
+            df_test = df_faces[df_faces['split'] == 'test'].groupby('label').sample(n=20, replace=True, random_state=42)
+        else:
+            print("[★] CHẾ ĐỘ FULL DATASET: Huấn luyện trên TOÀN BỘ dữ liệu đã cắt!")
+            df_train = df_faces[df_faces['split'] == 'train']
+            df_val = df_faces[df_faces['split'] == 'val']
+            df_test = df_faces[df_faces['split'] == 'test']
+
+        train_ds_raw = PreExtractedFaceDataset(df_train, base_dir=base_dir)
+        val_ds_raw = PreExtractedFaceDataset(df_val, base_dir=base_dir)
+        test_ds_raw = PreExtractedFaceDataset(df_test, base_dir=base_dir)
+        print(f"[*] Tổng mẫu nạp vào: Train ({len(train_ds_raw)} ảnh), Val ({len(val_ds_raw)} ảnh), Test ({len(test_ds_raw)} ảnh)")
+
+    else:
+        # --- OPTION 2: DATASET CŨ (ĐỌC TRỰC TIẾP TỪ VIDEO .MP4) ---
+        video_csv = args.video_csv or dataset_cfg.get('video_csv', 'master_split.csv')
+        if not os.path.exists(video_csv):
+            print(f"[!] Không tìm thấy {video_csv}! Hãy chạy file identity_split.py trước.")
+            return
+            
+        print(f"\n🐢 SỬ DỤNG DATASET CŨ (Trích xuất từ Video .mp4): {video_csv}")
+        df_master = pd.read_csv(video_csv)
+        
+        if DEBUG_MODE:
+            print("[!] ĐANG CHẠY Ở CHẾ ĐỘ DEBUG (Chỉ lấy mẫu nhỏ)")
+            df_train = df_master[df_master['split'] == 'train'].groupby('label').sample(n=10, replace=True, random_state=42)
+            df_val = df_master[df_master['split'] == 'val'].groupby('label').sample(n=5, replace=True, random_state=42)
+            df_test = df_master[df_master['split'] == 'test'].groupby('label').sample(n=5, replace=True, random_state=42)
+        else:
+            print("[★] CHẾ ĐỘ FULL DATASET: Trích xuất và train toàn bộ video gốc!")
+            df_train = df_master[df_master['split'] == 'train']
+            df_val = df_master[df_master['split'] == 'val']
+            df_test = df_master[df_master['split'] == 'test']
+        
+        print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP TRAIN")
+        train_ds_raw = DeepfakeDataset(df_train, frames_per_video=config['frames_per_video'], device=device)
+        print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP VAL")
+        val_ds_raw = DeepfakeDataset(df_val, frames_per_video=config['frames_per_video'], device=device)
+        print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT - TẬP TEST")
+        test_ds_raw = DeepfakeDataset(df_test, frames_per_video=config['frames_per_video'], device=device)
+
+    # 2. Vòng lặp huấn luyện từng Model trong Config
     os.makedirs('results/checkpoints', exist_ok=True)
     os.makedirs('results/metrics', exist_ok=True)
     os.makedirs('results/figures', exist_ok=True)
     
+    num_workers = 2 if os.name != 'nt' else 0
+    pin_mem = (device.type == 'cuda')
+
     for model_key, m_cfg in config['models'].items():
         print(f"\n{'='*50}\n🚀 ĐANG HUẤN LUYỆN: {model_key.upper()} \n{'='*50}")
         
@@ -91,9 +154,9 @@ def main():
         val_ds_raw.transform = transform_val
         test_ds_raw.transform = transform_val
         
-        train_loader = DataLoader(train_ds_raw, batch_size=m_cfg['batch_size'], shuffle=True)
-        val_loader = DataLoader(val_ds_raw, batch_size=m_cfg['batch_size'], shuffle=False)
-        test_loader = DataLoader(test_ds_raw, batch_size=m_cfg['batch_size'], shuffle=False)
+        train_loader = DataLoader(train_ds_raw, batch_size=m_cfg['batch_size'], shuffle=True, num_workers=num_workers, pin_memory=pin_mem)
+        val_loader = DataLoader(val_ds_raw, batch_size=m_cfg['batch_size'], shuffle=False, num_workers=num_workers, pin_memory=pin_mem)
+        test_loader = DataLoader(test_ds_raw, batch_size=m_cfg['batch_size'], shuffle=False, num_workers=num_workers, pin_memory=pin_mem)
         
         # Khởi tạo Model
         model = create_model(model_key, m_cfg, num_classes=1).to(device)
@@ -104,16 +167,18 @@ def main():
         patience_counter = 0
         history = []
         
-        # --- TRAINING LOOP TÍCH HỢP EARLY STOPPING ---
+        # --- TRAINING LOOP TÍCH HỢP EARLY STOPPING & PROGRESS BAR ---
         for epoch in range(config['epochs']):
             model.train()
             train_loss = 0
-            for images, labels, _ in train_loader:
+            train_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config['epochs']} [TRAIN]", leave=False)
+            for images, labels, _ in train_bar:
                 optimizer.zero_grad()
                 loss = criterion(model(images.to(device)).view(-1), labels.to(device))
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
+                train_bar.set_postfix({'loss': f"{loss.item():.4f}"})
             avg_train_loss = train_loss / len(train_loader)
             
             # Validation
@@ -124,7 +189,7 @@ def main():
                     val_loss += criterion(model(images.to(device)).view(-1), labels.to(device)).item()
             avg_val_loss = val_loss / len(val_loader)
             
-            print(f"Epoch {epoch+1}/{config['epochs']} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+            print(f"Epoch {epoch+1:02d}/{config['epochs']:02d} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
             history.append({'epoch': epoch+1, 'train_loss': avg_train_loss, 'val_loss': avg_val_loss})
             
             # Early Stopping

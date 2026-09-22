@@ -11,7 +11,7 @@ import sys
 
 sys.path.append('.')
 from src.models.factory import create_model
-from src.data.dataset import DeepfakeDataset
+from src.data.dataset import DeepfakeDataset, PreExtractedFaceDataset
 
 def load_config(config_path="configs/baseline.yaml"):
     with open(config_path, 'r') as file:
@@ -30,9 +30,21 @@ def run_error_analysis():
     os.makedirs('results/error_analysis/False_Positive', exist_ok=True)
     os.makedirs('results/error_analysis/False_Negative', exist_ok=True)
     
-    df_master = pd.read_csv('master_split.csv')
-    # Ở bước phân tích lỗi, ta không dùng sample, mà quét toàn bộ Test Set
-    df_test = df_master[df_master['split'] == 'test']
+    # Kiểm tra Dataset Mới hay Cũ
+    dataset_cfg = config.get('dataset', {})
+    mode = dataset_cfg.get('mode', 'faces')
+    faces_csv = dataset_cfg.get('faces_csv', 'faces_master.csv')
+    if not os.path.exists(faces_csv):
+        candidates = [
+            '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
+            '/kaggle/input/datasets/min2k4/face-ff/ffpp_faces/faces_master.csv',
+            '/kaggle/input/ffpp-faces-c23/faces_master.csv',
+            '/kaggle/working/ffpp_faces/faces_master.csv'
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                faces_csv = c
+                break
 
     # Sử dụng mô hình đầu tiên trong config (thường là baseline mạnh) để khảo sát lỗi
     model_key = list(config['models'].keys())[1] # Thử MobileNetV3 hoặc Xception
@@ -53,7 +65,16 @@ def run_error_analysis():
         A.Normalize(), ToTensorV2()
     ])
 
-    ds = DeepfakeDataset(df_test, transform=transform, frames_per_video=config['frames_per_video'], device=device)
+    if mode == 'faces' and os.path.exists(faces_csv):
+        print(f"\n🚀 SỬ DỤNG DATASET MỚI (Ảnh đã cắt sẵn): {faces_csv}")
+        df_faces = pd.read_csv(faces_csv)
+        df_test = df_faces[df_faces['split'] == 'test']
+        ds = PreExtractedFaceDataset(df_test, transform=transform, base_dir=os.path.dirname(faces_csv))
+    else:
+        print("\n🐢 SỬ DỤNG DATASET CŨ (Trích xuất từ video .mp4)")
+        df_master = pd.read_csv('master_split.csv')
+        df_test = df_master[df_master['split'] == 'test']
+        ds = DeepfakeDataset(df_test, transform=transform, frames_per_video=config['frames_per_video'], device=device)
     loader = DataLoader(ds, batch_size=1, shuffle=False)
 
     fp_count, fn_count = 0, 0

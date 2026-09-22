@@ -11,7 +11,7 @@ from albumentations.pytorch import ToTensorV2
 import sys
 sys.path.append('.')
 
-from src.data.dataset import DeepfakeDataset
+from src.data.dataset import DeepfakeDataset, PreExtractedFaceDataset
 from src.models.factory import create_model
 
 def load_config(config_path="configs/baseline.yaml"):
@@ -51,11 +51,33 @@ def run_cross_manipulation():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[*] Thiết bị: {device}")
     
-    df_master = pd.read_csv('master_split.csv')
-    df_test = df_master[df_master['split'] == 'test']
-    
-    print("\n[+] ĐANG TRÍCH XUẤT KHUÔN MẶT TẬP TEST (Chỉ trích xuất 1 lần duy nhất)")
-    raw_test_ds = DeepfakeDataset(df_test, transform=None, frames_per_video=config.get('frames_per_video', 3), device=device)
+    # Kiểm tra Dataset Mới hay Cũ
+    dataset_cfg = config.get('dataset', {})
+    mode = dataset_cfg.get('mode', 'faces')
+    faces_csv = dataset_cfg.get('faces_csv', 'faces_master.csv')
+    if not os.path.exists(faces_csv):
+        candidates = [
+            '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
+            '/kaggle/input/datasets/min2k4/face-ff/ffpp_faces/faces_master.csv',
+            '/kaggle/input/ffpp-faces-c23/faces_master.csv',
+            '/kaggle/working/ffpp_faces/faces_master.csv'
+        ]
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                faces_csv = candidate
+                break
+
+    if mode == 'faces' and os.path.exists(faces_csv):
+        print(f"\n🚀 SỬ DỤNG DATASET MỚI (Ảnh đã cắt sẵn - Tải tức thì): {faces_csv}")
+        df_faces = pd.read_csv(faces_csv)
+        df_test = df_faces[df_faces['split'] == 'test']
+        raw_test_ds = PreExtractedFaceDataset(df_test, base_dir=os.path.dirname(faces_csv))
+    else:
+        print("\n🐢 SỬ DỤNG DATASET CŨ (Trích xuất từ video .mp4)")
+        df_master = pd.read_csv('master_split.csv')
+        df_test = df_master[df_master['split'] == 'test']
+        print("[+] ĐANG TRÍCH XUẤT KHUÔN MẶT TẬP TEST (Chỉ trích xuất 1 lần duy nhất)")
+        raw_test_ds = DeepfakeDataset(df_test, transform=None, frames_per_video=config.get('frames_per_video', 3), device=device)
     
     manipulations = ['Deepfakes', 'Face2Face', 'FaceSwap', 'NeuralTextures']
     results = []
@@ -81,11 +103,16 @@ def run_cross_manipulation():
         
         row_res = {'Model': model_key}
         for manip in manipulations:
-            # Lấy indices của các sample là Real hoặc là Fake thuộc manipulation này
-            indices = [
-                i for i, s in enumerate(raw_test_ds.samples)
-                if s['label'] == 0 or s.get('manipulation') == manip
-            ]
+            # Lấy indices tương thích cả Dataset cũ và mới
+            if hasattr(raw_test_ds, 'samples'):
+                indices = [
+                    i for i, s in enumerate(raw_test_ds.samples)
+                    if s['label'] == 0 or s.get('manipulation') == manip
+                ]
+            else:
+                indices = raw_test_ds.df[
+                    (raw_test_ds.df['label'] == 0) | (raw_test_ds.df['manipulation'] == manip)
+                ].index.tolist()
             if len(indices) == 0:
                 row_res[f"{manip}_Acc"] = np.nan
                 row_res[f"{manip}_AUC"] = np.nan

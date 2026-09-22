@@ -107,7 +107,26 @@ def run_comprehensive_eda(csv_path="master_split.csv", output_dir="results/eda")
         plt.savefig(os.path.join(output_dir, "fft_comparison.png"), dpi=300)
         plt.close()
 
-    print(f"[✔] EDA Hoàn tất! Toàn bộ biểu đồ và CSV thống kê được lưu tại: {output_dir}")
-
 if __name__ == "__main__":
-    run_comprehensive_eda()
+    import argparse
+    parser = argparse.ArgumentParser(description="Chạy phân tích dữ liệu EDA")
+    parser.add_argument('--csv_path', type=str, default=None, help='Đường dẫn file CSV (master_split.csv hoặc faces_master.csv)')
+    parser.add_argument('--output_dir', type=str, default='results/eda', help='Thư mục lưu biểu đồ')
+    args = parser.parse_args()
+    
+    csv_target = args.csv_path
+    if csv_target is None:
+        candidates = [
+            'master_split.csv',
+            '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
+            '/kaggle/working/ffpp_faces/faces_master.csv',
+            'faces_master.csv'
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                csv_target = c
+                break
+    if csv_target is None:
+        csv_target = 'master_split.csv'
+        
+    run_comprehensive_eda(csv_path=csv_target, output_dir=args.output_dir)

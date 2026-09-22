@@ -1,7 +1,15 @@
 seed: 42
 epochs: 10
 patience: 3
-frames_per_video: 5
+frames_per_video: 3
+
+dataset:
+  mode: "faces" # Đã chuyển sang "faces" để train trên toàn bộ ảnh đã cắt sẵn (nhanh gấp 100 lần)
+  video_csv: "master_split.csv"
+  faces_csv: "/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv"
+
+
+
 
 models:
   meso4:

@@ -87,9 +87,10 @@ class PreExtractedFaceDataset(Dataset):
     Dataset đọc trực tiếp từ các file ảnh .jpg đã cắt sẵn.
     Tốc độ nhanh gấp 50-100 lần so với đọc từ video .mp4.
     """
-    def __init__(self, df, transform=None):
+    def __init__(self, df, transform=None, base_dir=None):
         self.df = df.reset_index(drop=True)
         self.transform = transform
+        self.base_dir = base_dir
         
         # Tạo mapping video_id dạng số để phục vụ video-level aggregation
         unique_vids = {vid: i for i, vid in enumerate(self.df['video_id'].unique())}
@@ -97,10 +98,31 @@ class PreExtractedFaceDataset(Dataset):
         
     def __len__(self):
         return len(self.df)
+
+    def _resolve_path(self, path):
+        if os.path.exists(path):
+            return path
+        if self.base_dir:
+            # 1. Thay thế prefix nếu ảnh được lưu từ /kaggle/working/ffpp_faces
+            normalized = path.replace('\\', '/')
+            if '/ffpp_faces/' in normalized:
+                rel = normalized.split('/ffpp_faces/')[-1]
+                candidate = os.path.join(self.base_dir, rel.replace('/', os.sep))
+                if os.path.exists(candidate): return candidate
+            # 2. Thử ghép cấu trúc thư mục con (split/label/filename)
+            parts = normalized.split('/')
+            if len(parts) >= 3:
+                candidate2 = os.path.join(self.base_dir, parts[-3], parts[-2], parts[-1])
+                if os.path.exists(candidate2): return candidate2
+            # 3. Thử trực tiếp trong base_dir
+            candidate3 = os.path.join(self.base_dir, os.path.basename(path))
+            if os.path.exists(candidate3): return candidate3
+        return path
         
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        img = cv2.imread(row['image_path'])
+        img_path = self._resolve_path(str(row['image_path']))
+        img = cv2.imread(img_path)
         if img is None:
             img = np.zeros((224, 224, 3), dtype=np.uint8)
         else:
