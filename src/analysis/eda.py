@@ -36,54 +36,101 @@ def run_comprehensive_eda(csv_path="master_split.csv", output_dir="results/eda")
     plt.savefig(os.path.join(output_dir, "manipulation_distribution.png"), dpi=300)
     plt.close()
 
-    # 2. PHÂN TÍCH METADATA (Lấy mẫu đại diện)
-    print("\n--- 2. Phân tích Metadata Video (Lấy mẫu 100 video) ---")
+    base_dir = os.path.dirname(csv_path)
+
+    def resolve_path(p):
+        if os.path.exists(p): return p
+        if base_dir:
+            normalized = p.replace('\\', '/')
+            if '/ffpp_faces/' in normalized:
+                rel = normalized.split('/ffpp_faces/')[-1]
+                cand = os.path.join(base_dir, rel.replace('/', os.sep))
+                if os.path.exists(cand): return cand
+            cand2 = os.path.join(base_dir, os.path.basename(p))
+            if os.path.exists(cand2): return cand2
+        return p
+
+    is_image_dataset = 'image_path' in df.columns
+    path_col = 'image_path' if is_image_dataset else 'video_path'
+
+    # 2. PHÂN TÍCH METADATA
+    print(f"\n--- 2. Phân tích Metadata ({'Ảnh Khuôn mặt' if is_image_dataset else 'Video'}) ---")
     sample_df = df.sample(n=min(100, len(df)), random_state=42)
     meta_records = []
 
-    for _, row in tqdm(sample_df.iterrows(), total=len(sample_df), desc="Quét Metadata"):
-        cap = cv2.VideoCapture(row['video_path'])
-        if cap.isOpened():
-            frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            meta_records.append({
-                'label': 'Real' if row['label'] == 0 else 'Fake',
-                'frames': frames,
-                'fps': fps,
-                'resolution': f"{w}x{h}"
-            })
-        cap.release()
+    if is_image_dataset:
+        for _, row in tqdm(sample_df.iterrows(), total=len(sample_df), desc="Quét Metadata Ảnh"):
+            actual_path = resolve_path(str(row['image_path']))
+            img = cv2.imread(actual_path)
+            if img is not None:
+                h, w, _ = img.shape
+                meta_records.append({
+                    'label': 'Real' if row['label'] == 0 else 'Fake',
+                    'resolution': f"{w}x{h}",
+                    'width': w,
+                    'height': h
+                })
+        df_meta = pd.DataFrame(meta_records)
+        
+        # Thống kê số lượng frame trên mỗi video
+        frames_per_vid = df.groupby('video_id').size().reset_index(name='frame_count')
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        sns.histplot(data=frames_per_vid, x='frame_count', bins=10, ax=axes[0], color='teal')
+        axes[0].set_title("Phân bố số lượng Frame trích xuất / Video")
+        
+        if not df_meta.empty:
+            sns.countplot(data=df_meta, x='resolution', hue='label', ax=axes[1])
+            axes[1].set_title("Phân bố Độ phân giải Khuôn mặt (Cắt từ MTCNN)")
+            axes[1].tick_params(axis='x', rotation=45)
+    else:
+        for _, row in tqdm(sample_df.iterrows(), total=len(sample_df), desc="Quét Metadata Video"):
+            cap = cv2.VideoCapture(str(row['video_path']))
+            if cap.isOpened():
+                frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                meta_records.append({
+                    'label': 'Real' if row['label'] == 0 else 'Fake',
+                    'frames': frames,
+                    'fps': fps,
+                    'resolution': f"{w}x{h}"
+                })
+            cap.release()
+        df_meta = pd.DataFrame(meta_records)
+        
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        sns.histplot(data=df_meta, x='frames', hue='label', kde=True, ax=axes[0])
+        axes[0].set_title("Phân bố số lượng Frame/Video")
 
-    df_meta = pd.DataFrame(meta_records)
-    
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    sns.histplot(data=df_meta, x='frames', hue='label', kde=True, ax=axes[0])
-    axes[0].set_title("Phân bố số lượng Frame/Video")
+        sns.countplot(data=df_meta, x='fps', hue='label', ax=axes[1])
+        axes[1].set_title("Phân bố Tốc độ khung hình (FPS)")
 
-    sns.countplot(data=df_meta, x='fps', hue='label', ax=axes[1])
-    axes[1].set_title("Phân bố Tốc độ khung hình (FPS)")
-
-    sns.countplot(data=df_meta, x='resolution', hue='label', ax=axes[2])
-    axes[2].set_title("Phân bố Độ phân giải")
-    axes[2].tick_params(axis='x', rotation=45)
+        sns.countplot(data=df_meta, x='resolution', hue='label', ax=axes[2])
+        axes[2].set_title("Phân bố Độ phân giải Video")
+        axes[2].tick_params(axis='x', rotation=45)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "video_metadata.png"), dpi=300)
+    plt.savefig(os.path.join(output_dir, "metadata_analysis.png"), dpi=300)
     plt.close()
 
     # 3. THỐNG KÊ PHỔ TẦN SỐ CAO FFT (Statistical FFT Energy)
     print("\n--- 3. Thống kê năng lượng FFT tần số cao ---")
-    real_sample_path = df[df['label'] == 0]['video_path'].iloc[0]
-    fake_sample_path = df[df['label'] == 1]['video_path'].iloc[0]
+    real_sample_path = resolve_path(str(df[df['label'] == 0][path_col].iloc[0]))
+    fake_sample_path = resolve_path(str(df[df['label'] == 1][path_col].iloc[0]))
 
-    def extract_fft_spectrum(video_path):
-        cap = cv2.VideoCapture(video_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 10)
-        ret, frame = cap.read()
-        cap.release()
-        if not ret: return None
+    def extract_fft_spectrum(file_path, is_img):
+        if is_img:
+            frame = cv2.imread(file_path)
+            if frame is None: return None, None
+        else:
+            cap = cv2.VideoCapture(file_path)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 10)
+            ret, frame = cap.read()
+            cap.release()
+            if not ret or frame is None: return None, None
+
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, (256, 256))
         f = np.fft.fft2(gray)
@@ -91,21 +138,22 @@ def run_comprehensive_eda(csv_path="master_split.csv", output_dir="results/eda")
         magnitude = 20 * np.log(np.abs(fshift) + 1e-8)
         return gray, magnitude
 
-    real_img, real_fft = extract_fft_spectrum(real_sample_path)
-    fake_img, fake_fft = extract_fft_spectrum(fake_sample_path)
+    real_img, real_fft = extract_fft_spectrum(real_sample_path, is_image_dataset)
+    fake_img, fake_fft = extract_fft_spectrum(fake_sample_path, is_image_dataset)
 
     if real_fft is not None and fake_fft is not None:
         fig, axes = plt.subplots(2, 2, figsize=(10, 10))
-        axes[0, 0].imshow(real_img, cmap='gray'); axes[0, 0].set_title("Real Frame (256x256)")
+        axes[0, 0].imshow(real_img, cmap='gray'); axes[0, 0].set_title("Real Sample (256x256)")
         axes[0, 1].imshow(real_fft, cmap='viridis'); axes[0, 1].set_title("Real FFT Spectrum")
 
-        axes[1, 0].imshow(fake_img, cmap='gray'); axes[1, 0].set_title("Fake Frame (256x256)")
+        axes[1, 0].imshow(fake_img, cmap='gray'); axes[1, 0].set_title("Fake Sample (256x256)")
         axes[1, 1].imshow(fake_fft, cmap='viridis'); axes[1, 1].set_title("Fake FFT Spectrum")
 
         for ax in axes.flat: ax.axis('off')
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, "fft_comparison.png"), dpi=300)
         plt.close()
+        print(f"[✔] Đã lưu biểu đồ FFT tại: {os.path.join(output_dir, 'fft_comparison.png')}")
 
 if __name__ == "__main__":
     import argparse
