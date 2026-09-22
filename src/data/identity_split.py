@@ -118,5 +118,10 @@ def build_identity_safe_split(data_dir, output_csv="master_split.csv", train_rat
     print(df.groupby(['split', 'label']).size().unstack(fill_value=0))
 
 if __name__ == "__main__":
-    # Test mẫu (để chạy thử, trên Kaggle bạn sẽ trỏ data_dir vào '/kaggle/input/...')
-    build_identity_safe_split(data_dir='./dummy_data', output_csv='master_split.csv')
+    import argparse
+    parser = argparse.ArgumentParser(description="Tạo tập Train/Val/Test an toàn cho FaceForensics++")
+    parser.add_argument('--data_dir', type=str, default='/kaggle/input/datasets/xdxd003/ff-c23/FaceForensics++_C23', help='Đường dẫn gốc dataset')
+    parser.add_argument('--output_csv', type=str, default='master_split.csv', help='File CSV đầu ra')
+    args = parser.parse_args()
+    
+    build_identity_safe_split(data_dir=args.data_dir, output_csv=args.output_csv)
