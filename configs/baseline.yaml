@@ -6,7 +6,7 @@ frames_per_video: 5
 dataset:
   mode: "faces"
   video_csv: "master_split.csv"
-  faces_csv: "/kaggle/working/ffpp_faces_c23/csv/faces_master.csv"
+  faces_csv: "/kaggle/input/ffpp_faces_c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv"
   max_videos: 2000  # 2000 video = 10,000 ảnh (5 frames/video)
   train_ratio: 0.70 # 70% Train = 1,400 video (7,000 ảnh)
   val_ratio: 0.15   # 15% Val   = 300 video (1,500 ảnh)

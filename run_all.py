@@ -29,12 +29,19 @@ def main():
     os.makedirs('results', exist_ok=True)
     
     # 0. Trích xuất khuôn mặt (Tùy chọn hoặc nếu chưa có dataset)
-    if args.extract_faces or not any(os.path.exists(p) for p in [
+    import glob
+    dataset_exists = any(os.path.exists(p) for p in [
+        '/kaggle/input/ffpp_faces_c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+        '/kaggle/input/ffpp-faces-c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
         '/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
         'ffpp_faces_c23/csv/faces_master.csv'
-    ]):
-        if args.extract_faces:
-            run_cmd("0. Trích xuất 35,000 khuôn mặt từ FaceForensics++ C23", f"{sys.executable} src/preprocessing/extract_faces_c23.py")
+    ]) or (os.path.exists('/kaggle/input') and bool(glob.glob('/kaggle/input/**/faces_master.csv', recursive=True)))
+
+    if args.extract_faces:
+        run_cmd("0. Trích xuất khuôn mặt từ FaceForensics++ C23", f"{sys.executable} src/preprocessing/extract_faces_c23.py")
+    elif not dataset_exists:
+        print("[*] Chưa phát hiện tập khuôn mặt đã cắt sẵn. Đang trích xuất tự động...")
+        run_cmd("0. Trích xuất khuôn mặt từ FaceForensics++ C23", f"{sys.executable} src/preprocessing/extract_faces_c23.py")
     
     # 1. EDA
     run_cmd("1. EDA & Phân tích Tần số FFT", f"{sys.executable} src/analysis/eda.py")

@@ -158,9 +158,13 @@ def main():
         # --- OPTION 1: DATASET MỚI (ẢNH ĐÃ CẮT SẴN - TRAIN SIÊU TỐC) ---
         faces_csv = args.faces_csv or dataset_cfg.get('faces_csv', 'faces_master.csv')
         
-        # Tự động dò tìm đường dẫn trên Kaggle
+        # Tự động dò tìm đường dẫn trên Kaggle nếu chưa tồn tại
         if not os.path.exists(faces_csv):
             candidates = [
+                '/kaggle/input/ffpp_faces_c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+                '/kaggle/input/ffpp-faces-c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+                '/kaggle/input/ffpp_faces_c23/kaggle/working/ffpp_faces_c23/faces_master.csv',
+                '/kaggle/input/ffpp-faces-c23/kaggle/working/ffpp_faces_c23/faces_master.csv',
                 '/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
                 '/kaggle/working/ffpp_faces_c23/faces_master.csv',
                 'ffpp_faces_c23/csv/faces_master.csv',
@@ -177,6 +181,12 @@ def main():
                 if os.path.exists(c):
                     faces_csv = c
                     break
+
+            if not os.path.exists(faces_csv) and os.path.exists('/kaggle/input'):
+                import glob
+                matches = glob.glob('/kaggle/input/**/faces_master.csv', recursive=True)
+                if matches:
+                    faces_csv = matches[0]
 
         if not os.path.exists(faces_csv):
             print(f"[!] Không tìm thấy file faces_master.csv tại: {faces_csv}")

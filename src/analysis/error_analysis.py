@@ -36,15 +36,22 @@ def run_error_analysis():
     faces_csv = dataset_cfg.get('faces_csv', 'faces_master.csv')
     if not os.path.exists(faces_csv):
         candidates = [
+            '/kaggle/input/ffpp_faces_c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+            '/kaggle/input/ffpp-faces-c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+            '/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+            'ffpp_faces_c23/csv/faces_master.csv',
             '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
-            '/kaggle/input/datasets/min2k4/face-ff/ffpp_faces/faces_master.csv',
-            '/kaggle/input/ffpp-faces-c23/faces_master.csv',
             '/kaggle/working/ffpp_faces/faces_master.csv'
         ]
         for c in candidates:
             if os.path.exists(c):
                 faces_csv = c
                 break
+        if not os.path.exists(faces_csv) and os.path.exists('/kaggle/input'):
+            import glob
+            matches = glob.glob('/kaggle/input/**/faces_master.csv', recursive=True)
+            if matches:
+                faces_csv = matches[0]
 
     # Sử dụng mô hình đầu tiên trong config (thường là baseline mạnh) để khảo sát lỗi
     model_key = list(config['models'].keys())[1] # Thử MobileNetV3 hoặc Xception

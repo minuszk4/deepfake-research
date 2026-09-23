@@ -171,6 +171,10 @@ if __name__ == "__main__":
     csv_target = args.csv_path
     if csv_target is None:
         candidates = [
+            '/kaggle/input/ffpp_faces_c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+            '/kaggle/input/ffpp-faces-c23/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+            '/kaggle/input/ffpp_faces_c23/kaggle/working/ffpp_faces_c23/faces_master.csv',
+            '/kaggle/input/ffpp-faces-c23/kaggle/working/ffpp_faces_c23/faces_master.csv',
             '/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
             '/kaggle/working/ffpp_faces_c23/faces_master.csv',
             'ffpp_faces_c23/csv/faces_master.csv',
@@ -184,6 +188,11 @@ if __name__ == "__main__":
             if os.path.exists(c):
                 csv_target = c
                 break
+        if not csv_target and os.path.exists('/kaggle/input'):
+            import glob
+            matches = glob.glob('/kaggle/input/**/faces_master.csv', recursive=True)
+            if matches:
+                csv_target = matches[0]
     if csv_target is None:
         csv_target = 'master_split.csv'
         
