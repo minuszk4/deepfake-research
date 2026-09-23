@@ -222,16 +222,17 @@ def worker_process(gpu_id, video_chunk, output_dir, frames_per_video, result_fil
         json.dump(records, f)
     print(f"[Worker GPU {gpu_id}] Hoàn tất! Đã trích xuất {len(records)} ảnh (Lỗi {failed_count} videos).")
 
-def extract_faces_ffpp_c23(data_dir=DEFAULT_DATA_DIR, output_dir='/kaggle/working/ffpp_faces_c23', frames_per_video=5):
+def extract_faces_ffpp_c23(data_dir=DEFAULT_DATA_DIR, output_dir='/kaggle/working/ffpp_faces_c23', frames_per_video=5, max_videos=None):
     """
-    Trích xuất khuôn mặt cho toàn bộ 7,000 video của FaceForensics++ C23:
-    - 5 frame/video -> Tổng ~35,000 ảnh khuôn mặt.
+    Trích xuất khuôn mặt cho FaceForensics++ C23:
+    - 5 frame/video -> Dự kiến trích xuất max_videos * 5 ảnh.
     - Cấu trúc thư mục khớp chuẩn FaceForensics++_C23.
     - Tự động nhận diện Đa GPU (T4 x 2) để tăng tốc gấp đôi!
     """
     num_gpus = torch.cuda.device_count()
     print("=" * 75)
-    print("🎬 KHỞI ĐỘNG TRÍCH XUẤT DATASET 7,000 VIDEO (5 FRAMES/VIDEO)")
+    target_str = f"{max_videos} VIDEO ({max_videos*frames_per_video} ẢNH)" if max_videos else "TOÀN BỘ 7,000 VIDEO (35,000 ẢNH)"
+    print(f"🎬 KHỞI ĐỘNG TRÍCH XUẤT DATASET {target_str}")
     print(f"   Thư mục nguồn (Input) : {data_dir}")
     print(f"   Thư mục đích (Output) : {output_dir}")
     print(f"   Số GPU khả dụng       : {num_gpus} {'(T4 x 2 Kích hoạt Đa GPU Song Song!)' if num_gpus >= 2 else ''}")
@@ -277,10 +278,55 @@ def extract_faces_ffpp_c23(data_dir=DEFAULT_DATA_DIR, output_dir='/kaggle/workin
             })
 
     total_vids = len(video_tasks)
-    print(f"\n[+] Tổng số video cần xử lý: {total_vids} (Dự kiến trích xuất: {total_vids * frames_per_video} ảnh)")
+    print(f"\n[+] Tổng số video tìm thấy: {total_vids}")
     if total_vids == 0:
         print("[❌] Không tìm thấy video nào. Vui lòng kiểm tra lại đường dẫn input!")
         return
+
+    # Nếu có chỉ định max_videos (ví dụ 2000 video = 10,000 ảnh)
+    if max_videos and max_videos > 0 and max_videos < len(video_tasks):
+        import random
+        random.seed(42)
+        real_tasks = [t for t in video_tasks if t['label'] == 0]
+        fake_tasks = [t for t in video_tasks if t['label'] == 1]
+        
+        target_real = max_videos // 2
+        target_fake = max_videos - target_real
+        
+        random.shuffle(real_tasks)
+        selected_real = real_tasks[:target_real]
+        
+        fake_by_cat = {}
+        for t in fake_tasks:
+            fake_by_cat.setdefault(t['category'], []).append(t)
+        per_cat = max(1, target_fake // max(1, len(fake_by_cat)))
+        selected_fake = []
+        for cat, tasks in fake_by_cat.items():
+            random.shuffle(tasks)
+            selected_fake.extend(tasks[:per_cat])
+        if len(selected_fake) < target_fake:
+            rem = [t for t in fake_tasks if t not in selected_fake]
+            random.shuffle(rem)
+            selected_fake.extend(rem[:target_fake - len(selected_fake)])
+        selected_fake = selected_fake[:target_fake]
+            
+        # Chia 70% Train, 15% Val, 15% Test
+        def assign_splits(tasks):
+            n = len(tasks)
+            n_tr = int(round(n * 0.70))
+            n_va = int(round(n * 0.15))
+            for i, t in enumerate(tasks):
+                if i < n_tr: t['split'] = 'train'
+                elif i < n_tr + n_va: t['split'] = 'val'
+                else: t['split'] = 'test'
+                
+        assign_splits(selected_real)
+        assign_splits(selected_fake)
+        video_tasks = selected_real + selected_fake
+        print(f"🎯 ĐÃ LỌC ĐÚNG {len(video_tasks)} VIDEO (~{len(video_tasks)*frames_per_video} ẢNH) THEO TỶ LỆ 70% TRAIN | 15% VAL | 15% TEST")
+        print(f"   - Train (70%): {int(round(target_real*0.70)) + int(round(target_fake*0.70))} videos ({int(round(target_real*0.70))*frames_per_video + int(round(target_fake*0.70))*frames_per_video} ảnh)")
+        print(f"   - Val   (15%): {int(round(target_real*0.15)) + int(round(target_fake*0.15))} videos ({int(round(target_real*0.15))*frames_per_video + int(round(target_fake*0.15))*frames_per_video} ảnh)")
+        print(f"   - Test  (15%): {int(round(target_real*0.15)) + int(round(target_fake*0.15))} videos ({int(round(target_real*0.15))*frames_per_video + int(round(target_fake*0.15))*frames_per_video} ảnh)")
 
     start_time = time.time()
     all_extracted_records = []
@@ -354,6 +400,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', type=str, default=DEFAULT_DATA_DIR, help='Đường dẫn tới thư mục FaceForensics++_C23')
     parser.add_argument('--output_dir', type=str, default='/kaggle/working/ffpp_faces_c23', help='Thư mục lưu khuôn mặt')
     parser.add_argument('--frames_per_video', type=int, default=5, help='Số frame trích xuất mỗi video')
+    parser.add_argument('--max_videos', type=int, default=None, help='Số video tối đa cần trích xuất (ví dụ 2000 video = 10,000 ảnh). Để trống để trích toàn bộ.')
     args = parser.parse_args()
 
     found_data_dir = find_dataset_dir(args.data_dir)
@@ -364,5 +411,6 @@ if __name__ == "__main__":
         extract_faces_ffpp_c23(
             data_dir=found_data_dir,
             output_dir=args.output_dir,
-            frames_per_video=args.frames_per_video
+            frames_per_video=args.frames_per_video,
+            max_videos=args.max_videos
         )

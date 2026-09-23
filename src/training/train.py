@@ -32,6 +32,100 @@ def set_seed(seed=42):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
 
+def sample_balanced_video_dataset(df, max_videos=2000, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15, seed=42):
+    """
+    Trích xuất đúng `max_videos` video (ví dụ 2,000 video = 10,000 ảnh nếu 5 frames/video)
+    theo tỷ lệ Train:Val:Test (ví dụ 70:15:15 -> 1,400:300:300 video).
+    Đảm bảo:
+    1. Không rò rỉ frame: Toàn bộ frames của 1 video nằm CÙNG 1 split.
+    2. Cân bằng nhãn: 50% Real (1,000 video) và 50% Fake (1,000 video chia đều các manipulation).
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+
+    # Nhóm theo video_id để lấy danh sách video và nhãn
+    video_meta = df.groupby('video_id').agg({
+        'label': 'first',
+        'manipulation': 'first'
+    }).reset_index()
+
+    total_available_vids = len(video_meta)
+    if max_videos is None or max_videos <= 0 or max_videos >= total_available_vids:
+        target_vids = total_available_vids
+    else:
+        target_vids = max_videos
+
+    real_vids = video_meta[video_meta['label'] == 0]['video_id'].tolist()
+    fake_vids = video_meta[video_meta['label'] == 1]['video_id'].tolist()
+
+    target_real_count = target_vids // 2
+    target_fake_count = target_vids - target_real_count
+
+    # Lấy Real videos ngẫu nhiên có kiểm soát seed
+    random.shuffle(real_vids)
+    selected_real = real_vids[:min(len(real_vids), target_real_count)]
+
+    # Lấy Fake videos cân đối theo từng manipulation
+    fake_df = video_meta[video_meta['label'] == 1]
+    manip_types = [m for m in fake_df['manipulation'].unique() if m != 'original']
+    if not manip_types:
+        manip_types = fake_df['manipulation'].unique()
+
+    per_manip_target = max(1, target_fake_count // max(1, len(manip_types)))
+    selected_fake = []
+    for m in manip_types:
+        m_vids = fake_df[fake_df['manipulation'] == m]['video_id'].tolist()
+        random.shuffle(m_vids)
+        selected_fake.extend(m_vids[:per_manip_target])
+    
+    # Bù đắp nếu còn thiếu do làm tròn
+    if len(selected_fake) < target_fake_count:
+        remaining_fake = [v for v in fake_vids if v not in selected_fake]
+        random.shuffle(remaining_fake)
+        selected_fake.extend(remaining_fake[:target_fake_count - len(selected_fake)])
+    selected_fake = selected_fake[:target_fake_count]
+
+    # Phân chia Train / Val / Test (70% : 15% : 15%)
+    def split_video_list(vid_list):
+        n = len(vid_list)
+        n_train = int(round(n * train_ratio))
+        n_val = int(round(n * val_ratio))
+        train = vid_list[:n_train]
+        val = vid_list[n_train:n_train + n_val]
+        test = vid_list[n_train + n_val:]
+        return train, val, test
+
+    real_train, real_val, real_test = split_video_list(selected_real)
+    fake_train, fake_val, fake_test = split_video_list(selected_fake)
+
+    train_vids = set(real_train + fake_train)
+    val_vids = set(real_val + fake_val)
+    test_vids = set(real_test + fake_test)
+
+    # Gán split mới cho toàn bộ ảnh của các video được chọn
+    all_chosen_vids = train_vids | val_vids | test_vids
+    df_selected = df[df['video_id'].isin(all_chosen_vids)].copy()
+    
+    def assign_split(vid):
+        if vid in train_vids: return 'train'
+        if vid in val_vids: return 'val'
+        return 'test'
+
+    df_selected['split'] = df_selected['video_id'].map(assign_split)
+
+    print("\n" + "=" * 70)
+    print(f"🎯 PHÂN BỔ TẬP DỮ LIỆU CHUẨN: {len(all_chosen_vids)} VIDEOS ({len(df_selected)} ẢNH)")
+    print(f"   Tỷ lệ cấu hình: Train {train_ratio*100:.0f}% | Val {val_ratio*100:.0f}% | Test {test_ratio*100:.0f}%")
+    print(f"   - TRAIN (70%): {len(train_vids):4d} videos ({len(df_selected[df_selected['split']=='train']):5d} ảnh) "
+          f"[Real: {len(real_train)}, Fake: {len(fake_train)}]")
+    print(f"   - VAL   (15%): {len(val_vids):4d} videos ({len(df_selected[df_selected['split']=='val']):5d} ảnh) "
+          f"[Real: {len(real_val)}, Fake: {len(fake_val)}]")
+    print(f"   - TEST  (15%): {len(test_vids):4d} videos ({len(df_selected[df_selected['split']=='test']):5d} ảnh) "
+          f"[Real: {len(real_test)}, Fake: {len(fake_test)}]")
+    print("=" * 70 + "\n")
+
+    return df_selected
+
 def load_config(config_path):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
@@ -42,6 +136,8 @@ def main():
                         help='Chế độ: "faces" (Dataset MỚI đọc ảnh cắt sẵn) hoặc "video" (Dataset CŨ đọc mp4)')
     parser.add_argument('--faces_csv', type=str, default=None, help='Đường dẫn faces_master.csv')
     parser.add_argument('--video_csv', type=str, default=None, help='Đường dẫn master_split.csv')
+    parser.add_argument('--max_videos', type=int, default=None, 
+                        help='Số lượng video để huấn luyện (mặc định lấy từ baseline.yaml: 2000 video = 10,000 ảnh)')
     parser.add_argument('--debug', type=str, default='false', choices=['true', 'false'], 
                         help='Bật/Tắt DEBUG_MODE (mặc định "false" để train toàn bộ dữ liệu)')
     args = parser.parse_args()
@@ -97,7 +193,22 @@ def main():
             df_val = df_faces[df_faces['split'] == 'val'].groupby('label').sample(n=20, replace=True, random_state=42)
             df_test = df_faces[df_faces['split'] == 'test'].groupby('label').sample(n=20, replace=True, random_state=42)
         else:
-            print("[★] CHẾ ĐỘ FULL DATASET: Huấn luyện trên TOÀN BỘ dữ liệu đã cắt!")
+            # Lấy max_videos từ CLI argument hoặc baseline.yaml (mặc định 2000 video = 10,000 ảnh)
+            max_vids = args.max_videos if args.max_videos is not None else dataset_cfg.get('max_videos', 2000)
+            train_r = dataset_cfg.get('train_ratio', 0.70)
+            val_r = dataset_cfg.get('val_ratio', 0.15)
+            test_r = dataset_cfg.get('test_ratio', 0.15)
+            
+            # Tự động lọc đúng max_videos và phân chia theo tỷ lệ 70% : 15% : 15%
+            df_faces = sample_balanced_video_dataset(
+                df_faces, 
+                max_videos=max_vids, 
+                train_ratio=train_r, 
+                val_ratio=val_r, 
+                test_ratio=test_r, 
+                seed=config.get('seed', 42)
+            )
+            
             df_train = df_faces[df_faces['split'] == 'train']
             df_val = df_faces[df_faces['split'] == 'val']
             df_test = df_faces[df_faces['split'] == 'test']
