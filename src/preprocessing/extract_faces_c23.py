@@ -139,6 +139,7 @@ def worker_process(gpu_id, video_chunk, output_dir, frames_per_video, result_fil
     """
     Worker xử lý trên 1 GPU riêng biệt (hỗ trợ GPU T4 x 2 song song).
     """
+    cv2.setNumThreads(1) # Giảm xung đột luồng CPU giữa các tiến trình song song
     device = torch.device(f'cuda:{gpu_id}' if (torch.cuda.is_available() and gpu_id >= 0) else 'cpu')
     print(f"[Worker GPU {gpu_id}] Bắt đầu xử lý {len(video_chunk)} video trên thiết bị: {device}")
     
