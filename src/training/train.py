@@ -11,7 +11,10 @@ from albumentations.pytorch import ToTensorV2
 import random
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix, roc_curve
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, 
+    roc_auc_score, confusion_matrix, roc_curve
+)
 from tqdm import tqdm
 
 import argparse
@@ -62,6 +65,10 @@ def main():
         # Tự động dò tìm đường dẫn trên Kaggle
         if not os.path.exists(faces_csv):
             candidates = [
+                '/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+                '/kaggle/working/ffpp_faces_c23/faces_master.csv',
+                'ffpp_faces_c23/csv/faces_master.csv',
+                'ffpp_faces_c23/faces_master.csv',
                 '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
                 '/kaggle/input/datasets/min2k4/face-ff/ffpp_faces/faces_master.csv',
                 '/kaggle/input/ffpp-faces-c23/faces_master.csv',
@@ -228,38 +235,76 @@ def main():
         model.eval()
         
         all_probs, all_labels, all_vids = [], [], []
+        test_losses = []
+        test_start_time = time.time()
         
         with torch.no_grad():
             for images, labels, vids in test_loader:
-                probs = torch.sigmoid(model(images.to(device)).view(-1)).cpu().numpy()
+                images_dev, labels_dev = images.to(device), labels.to(device)
+                outputs = model(images_dev).view(-1)
+                loss = criterion(outputs, labels_dev)
+                test_losses.append(loss.item())
+                probs = torch.sigmoid(outputs).cpu().numpy()
                 all_probs.extend(probs)
                 all_labels.extend(labels.numpy())
                 all_vids.extend(vids.numpy())
                 
-        # 1. Frame-level Metrics
-        preds = (np.array(all_probs) >= 0.5).astype(int)
-        labels = np.array(all_labels)
-        print("--- FRAME-LEVEL ---")
-        print(f"Accuracy : {accuracy_score(labels, preds):.4f}")
-        print(f"F1-Score : {f1_score(labels, preds, zero_division=0):.4f}")
+        test_elapsed_time = time.time() - test_start_time
         
+        # 1. Frame-level Metrics (Chuẩn theo format ảnh mẫu)
+        frame_preds = (np.array(all_probs) >= 0.5).astype(int)
+        frame_labels = np.array(all_labels).astype(int)
+        frame_probs = np.array(all_probs)
+        frame_auc = roc_auc_score(frame_labels, frame_probs) if len(np.unique(frame_labels)) > 1 else 0.5
+        
+        frame_metrics = {
+            "loss": float(np.mean(test_losses)),
+            "accuracy": float(accuracy_score(frame_labels, frame_preds)),
+            "precision": float(precision_score(frame_labels, frame_preds, zero_division=0)),
+            "recall": float(recall_score(frame_labels, frame_preds, zero_division=0)),
+            "f1": float(f1_score(frame_labels, frame_preds, zero_division=0)),
+            "roc_auc": float(frame_auc),
+            "time_sec": float(test_elapsed_time),
+            "ms_per_sample": float(test_elapsed_time * 1000 / len(test_loader.dataset))
+        }
+        
+        print("\n--- FRAME-LEVEL METRICS ---")
+        for k, v in frame_metrics.items():
+            print(f"  {k:15s}: {v:.4f}" if isinstance(v, float) else f"  {k:15s}: {v}")
+            
         # 2. Video-level Metrics (Aggregation)
         df_test_preds = pd.DataFrame({'vid_id': all_vids, 'prob': all_probs, 'label': all_labels})
         vid_agg = df_test_preds.groupby('vid_id').mean()
         vid_preds = (vid_agg['prob'] >= 0.5).astype(int)
         vid_labels = vid_agg['label'].astype(int)
+        vid_probs = vid_agg['prob']
+        vid_auc = roc_auc_score(vid_labels, vid_probs) if len(np.unique(vid_labels)) > 1 else 0.5
         
-        print("--- VIDEO-LEVEL ---")
-        print(f"Accuracy : {accuracy_score(vid_labels, vid_preds):.4f}")
-        print(f"F1-Score : {f1_score(vid_labels, vid_preds, zero_division=0):.4f}")
-        if len(np.unique(vid_labels)) > 1:
-            auc = roc_auc_score(vid_labels, vid_agg['prob'])
-            print(f"ROC-AUC  : {auc:.4f}")
+        video_metrics = {
+            "loss": float(np.mean(test_losses)),
+            "accuracy": float(accuracy_score(vid_labels, vid_preds)),
+            "precision": float(precision_score(vid_labels, vid_preds, zero_division=0)),
+            "recall": float(recall_score(vid_labels, vid_preds, zero_division=0)),
+            "f1": float(f1_score(vid_labels, vid_preds, zero_division=0)),
+            "roc_auc": float(vid_auc),
+            "time_sec": float(test_elapsed_time),
+            "ms_per_sample": float(test_elapsed_time * 1000 / len(vid_agg))
+        }
+        
+        print("\n--- VIDEO-LEVEL METRICS ---")
+        for k, v in video_metrics.items():
+            print(f"  {k:15s}: {v:.4f}" if isinstance(v, float) else f"  {k:15s}: {v}")
             
-            # Vẽ ROC Curve & Confusion Matrix
-            fpr, tpr, _ = roc_curve(vid_labels, vid_agg['prob'])
+        # Lưu Metrics thành file JSON
+        import json
+        with open(f"results/metrics/{model_key}_metrics.json", "w") as jf:
+            json.dump({'frame_level': frame_metrics, 'video_level': video_metrics}, jf, indent=4)
+            
+        # Vẽ ROC Curve & Confusion Matrix cho Video-level
+        if len(np.unique(vid_labels)) > 1:
+            fpr, tpr, _ = roc_curve(vid_labels, vid_probs)
             plt.figure(figsize=(6, 5))
-            plt.plot(fpr, tpr, label=f"AUC = {auc:.4f}")
+            plt.plot(fpr, tpr, label=f"AUC = {vid_auc:.4f}")
             plt.plot([0, 1], [0, 1], 'k--')
             plt.title(f"ROC Curve - Video-Level ({model_key.upper()})")
             plt.xlabel("False Positive Rate")

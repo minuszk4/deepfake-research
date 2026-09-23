@@ -1,12 +1,12 @@
 seed: 42
 epochs: 10
 patience: 3
-frames_per_video: 3
+frames_per_video: 5
 
 dataset:
-  mode: "faces" # Đã chuyển sang "faces" để train trên toàn bộ ảnh đã cắt sẵn (nhanh gấp 100 lần)
+  mode: "faces"
   video_csv: "master_split.csv"
-  faces_csv: "/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv"
+  faces_csv: "/kaggle/working/ffpp_faces_c23/csv/faces_master.csv"
 
 
 

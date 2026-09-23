@@ -18,10 +18,23 @@ def run_cmd(step_name, command):
         print(f"[✔] HOÀN TẤT: {step_name} trong {elapsed:.1f} giây")
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Pipeline nghiên cứu Deepfake toàn diện")
+    parser.add_argument('--extract_faces', action='store_true', help='Kích hoạt trích xuất trước 35,000 khuôn mặt (7000 video, 5 frame/vid)')
+    args = parser.parse_args()
+
     print("\n" + "="*70)
     print("🎉 KHỞI ĐỘNG TOÀN BỘ PIPELINE NGHIÊN CỨU DEEPFAKE (RESEARCH-GRADE)")
     print("="*70)
     os.makedirs('results', exist_ok=True)
+    
+    # 0. Trích xuất khuôn mặt (Tùy chọn hoặc nếu chưa có dataset)
+    if args.extract_faces or not any(os.path.exists(p) for p in [
+        '/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+        'ffpp_faces_c23/csv/faces_master.csv'
+    ]):
+        if args.extract_faces:
+            run_cmd("0. Trích xuất 35,000 khuôn mặt từ FaceForensics++ C23", f"{sys.executable} src/preprocessing/extract_faces_c23.py")
     
     # 1. EDA
     run_cmd("1. EDA & Phân tích Tần số FFT", f"{sys.executable} src/analysis/eda.py")

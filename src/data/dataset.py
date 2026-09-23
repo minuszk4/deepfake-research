@@ -104,20 +104,32 @@ class PreExtractedFaceDataset(Dataset):
         if os.path.exists(path):
             return path
         if self.base_dir:
-            # 1. Thay thế prefix nếu ảnh được lưu từ /kaggle/working/ffpp_faces
             normalized = path.replace('\\', '/')
-            if '/ffpp_faces/' in normalized:
-                rel = normalized.split('/ffpp_faces/')[-1]
-                candidate = os.path.join(self.base_dir, rel.replace('/', os.sep))
-                if os.path.exists(candidate): return candidate
-            # 2. Thử ghép cấu trúc thư mục con (split/label/filename)
+            basename = os.path.basename(normalized)
+            
+            # Nếu base_dir kết thúc bằng 'csv', thư mục gốc dataset là thư mục cha
+            root_dir = os.path.dirname(self.base_dir) if os.path.basename(self.base_dir) == 'csv' else self.base_dir
+            
+            # 1. Thử ghép theo cấu trúc thư mục manipulation: root_dir / category / basename
             parts = normalized.split('/')
-            if len(parts) >= 3:
-                candidate2 = os.path.join(self.base_dir, parts[-3], parts[-2], parts[-1])
-                if os.path.exists(candidate2): return candidate2
-            # 3. Thử trực tiếp trong base_dir
-            candidate3 = os.path.join(self.base_dir, os.path.basename(path))
-            if os.path.exists(candidate3): return candidate3
+            if len(parts) >= 2:
+                cat = parts[-2]
+                candidate_cat = os.path.join(root_dir, cat, basename)
+                if os.path.exists(candidate_cat): return candidate_cat
+                
+            # 2. Thử thay thế prefix ffpp_faces hoặc ffpp_faces_c23
+            for prefix in ['/ffpp_faces_c23/', '/ffpp_faces/']:
+                if prefix in normalized:
+                    rel = normalized.split(prefix)[-1]
+                    cand = os.path.join(root_dir, rel.replace('/', os.sep))
+                    if os.path.exists(cand): return cand
+
+            # 3. Thử trực tiếp trong base_dir hoặc root_dir
+            cand_direct = os.path.join(root_dir, basename)
+            if os.path.exists(cand_direct): return cand_direct
+            cand_base = os.path.join(self.base_dir, basename)
+            if os.path.exists(cand_base): return cand_base
+            
         return path
         
     def __getitem__(self, idx):

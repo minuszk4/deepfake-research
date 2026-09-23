@@ -42,11 +42,17 @@ def run_comprehensive_eda(csv_path="master_split.csv", output_dir="results/eda")
         if os.path.exists(p): return p
         if base_dir:
             normalized = p.replace('\\', '/')
-            if '/ffpp_faces/' in normalized:
-                rel = normalized.split('/ffpp_faces/')[-1]
-                cand = os.path.join(base_dir, rel.replace('/', os.sep))
-                if os.path.exists(cand): return cand
-            cand2 = os.path.join(base_dir, os.path.basename(p))
+            root_dir = os.path.dirname(base_dir) if os.path.basename(base_dir) == 'csv' else base_dir
+            for prefix in ['/ffpp_faces_c23/', '/ffpp_faces/']:
+                if prefix in normalized:
+                    rel = normalized.split(prefix)[-1]
+                    cand = os.path.join(root_dir, rel.replace('/', os.sep))
+                    if os.path.exists(cand): return cand
+            parts = normalized.split('/')
+            if len(parts) >= 2:
+                cand_cat = os.path.join(root_dir, parts[-2], parts[-1])
+                if os.path.exists(cand_cat): return cand_cat
+            cand2 = os.path.join(root_dir, os.path.basename(p))
             if os.path.exists(cand2): return cand2
         return p
 
@@ -165,9 +171,13 @@ if __name__ == "__main__":
     csv_target = args.csv_path
     if csv_target is None:
         candidates = [
-            'master_split.csv',
+            '/kaggle/working/ffpp_faces_c23/csv/faces_master.csv',
+            '/kaggle/working/ffpp_faces_c23/faces_master.csv',
+            'ffpp_faces_c23/csv/faces_master.csv',
+            'ffpp_faces_c23/faces_master.csv',
             '/kaggle/input/datasets/min2k4/face-ff/kaggle/working/ffpp_faces/faces_master.csv',
             '/kaggle/working/ffpp_faces/faces_master.csv',
+            'master_split.csv',
             'faces_master.csv'
         ]
         for c in candidates:
